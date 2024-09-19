@@ -342,7 +342,7 @@ void on_conn_closed(lsquic_conn_t *c) {
 
 lsquic_stream_ctx_t *on_new_stream(void *stream_if_ctx, lsquic_stream_t *s) {
 
-    /* In true usockets style we always want read */
+    /* In true fastsockets style we always want read */
     lsquic_stream_wantread(s, 1);
 
     us_quic_socket_context_t *context = stream_if_ctx;

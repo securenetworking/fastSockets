@@ -1,4 +1,4 @@
-module uSockets {
-	header "src/libusockets.h"
+module fastSockets {
+	header "src/libfastsockets.h"
 	export *
 }

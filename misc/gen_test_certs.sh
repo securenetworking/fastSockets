@@ -15,7 +15,7 @@ function gen_cert {
 
     openssl req -new -sha256 \
         -key ${path}/${CN}_key.pem \
-        -subj "/O=uNetworking/O=uSockets/CN=${CN}" \
+        -subj "/O=uNetworking/O=fastSockets/CN=${CN}" \
         -reqexts SAN \
         -config <(cat /etc/ssl/openssl.cnf \
             <(printf "\n[SAN]\nsubjectAltName=DNS:localhost,DNS:127.0.0.1")) \

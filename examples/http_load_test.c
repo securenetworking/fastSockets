@@ -1,5 +1,5 @@
 /* This is a simple yet efficient HTTP server benchmark */
-#include <libusockets.h>
+#include <libfastsockets.h>
 /* If compiled with SSL support, enable it */
 const int SSL = 1;
 

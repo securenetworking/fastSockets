@@ -1,6 +1,6 @@
 /* This is a basic TCP/TLS echo server. */
 
-#include <libusockets.h>
+#include <libfastsockets.h>
 const int SSL = 1;
 
 #include <stdio.h>
@@ -125,8 +125,8 @@ int main() {
 
 	/* Socket context */
 	struct us_socket_context_options_t options = {};
-	options.key_file_name = "/home/alexhultman/uWebSockets.js/misc/key.pem";
-	options.cert_file_name = "/home/alexhultman/uWebSockets.js/misc/cert.pem";
+	options.key_file_name = "/home/alexhultman/fastWebSockets.js/misc/key.pem";
+	options.cert_file_name = "/home/alexhultman/fastWebSockets.js/misc/cert.pem";
 	options.passphrase = "1234";
 
 	struct us_socket_context_t *echo_context = us_create_socket_context(SSL, loop, sizeof(struct echo_context), options);

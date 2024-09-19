@@ -18,7 +18,7 @@
 #ifdef LIBUS_USE_IO_URING
 
 
-#include "libusockets.h"
+#include "libfastsockets.h"
 #include "internal/internal.h"
 #include "internal.h"
 #include <stdlib.h>

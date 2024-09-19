@@ -1,6 +1,6 @@
 /* This example, or test, is a moron test where the library is being hammered in all the possible ways randomly over time */
 
-#include <libusockets.h>
+#include <libfastsockets.h>
 const int SSL = 1;
 
 #include <stdio.h>

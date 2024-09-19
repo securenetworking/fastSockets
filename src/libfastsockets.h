@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef LIBUSOCKETS_H
-#define LIBUSOCKETS_H
+#ifndef LIBFASTSOCKETS_H
+#define LIBFASTSOCKETS_H
 
 /* 512kb shared receive buffer */
 #define LIBUS_RECV_BUFFER_LENGTH 524288
@@ -192,7 +192,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls);
 
-/* Adopt a socket which was accepted either internally, or from another accept() outside libusockets */
+/* Adopt a socket which was accepted either internally, or from another accept() outside libfastsockets */
 struct us_socket_t *us_adopt_accepted_socket(int ssl, struct us_socket_context_t *context, LIBUS_SOCKET_DESCRIPTOR client_fd,
     unsigned int socket_ext_size, char *addr_ip, int addr_ip_length);
 
@@ -347,4 +347,4 @@ void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *le
 #endif
 #endif
 
-#endif // LIBUSOCKETS_H
+#endif // LIBFASTSOCKETS_H

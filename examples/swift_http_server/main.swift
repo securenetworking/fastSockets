@@ -2,7 +2,7 @@
 
 import Foundation
 import CoreFoundation
-import uSockets
+import fastSockets
 
 /* Keep track of connections, for fun */
 var sockets = 0

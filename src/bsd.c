@@ -19,7 +19,7 @@
 
 #define __APPLE_USE_RFC_3542
 
-#include "libusockets.h"
+#include "libfastsockets.h"
 #include "internal/internal.h"
 
 #include <stdio.h>

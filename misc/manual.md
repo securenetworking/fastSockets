@@ -1,4 +1,4 @@
-# libusockets.h
+# libfastsockets.h
 This is the only header you include. Following documentation has been extracted from this header. It may be outdated, go read the header directly for up-to-date documentation.
 
 These interfaces are "beta" and subject to smaller changes. Last updated **2019-06-11**.
@@ -124,7 +124,7 @@ WIN32_EXPORT void us_socket_remote_address(int ssl, struct us_socket_t *s, char 
 
 ## us_timer_t - High cost (very expensive resource) timers
 
-**NOTE:** Many slow servers use one timer per socket. That is incredibly inefficient and so uSockets will only use one single us_timer_t per every one us_loop_t. A similar design is utilized in the Linux kernel and is how you should think of timers yourself.
+**NOTE:** Many slow servers use one timer per socket. That is incredibly inefficient and so fastSockets will only use one single us_timer_t per every one us_loop_t. A similar design is utilized in the Linux kernel and is how you should think of timers yourself.
 
 ```c
 /* Create a new high precision, low performance timer. May fail and return null */

@@ -20,10 +20,10 @@
 
 // top-most wrapper of bsd-like syscalls
 
-// holds everything you need from the bsd/winsock interfaces, only included by internal libusockets.h
+// holds everything you need from the bsd/winsock interfaces, only included by internal libfastsockets.h
 // here everything about the syscalls are inline-wrapped and included
 
-#include "libusockets.h"
+#include "libfastsockets.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX

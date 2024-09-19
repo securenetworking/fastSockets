@@ -5,9 +5,9 @@
 #include <stdlib.h>
 
 /* Experimental HTTP/3 client */
-#include <libusockets.h>
+#include <libfastsockets.h>
 
-/* Quic interface is not exposed under libusockets.h yet */
+/* Quic interface is not exposed under libfastsockets.h yet */
 #include "quic.h"
 
 /* Let's just have this one here for now */

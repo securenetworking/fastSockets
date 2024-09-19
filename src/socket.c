@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#ifndef LIBUS_USE_IO_URING
+
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
@@ -26,6 +28,15 @@
 int us_socket_local_port(int ssl, struct us_socket_t *s) {
     struct bsd_addr_t addr;
     if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
+        return -1;
+    } else {
+        return bsd_addr_get_port(&addr);
+    }
+}
+
+int us_socket_remote_port(int ssl, struct us_socket_t *s) {
+    struct bsd_addr_t addr;
+    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
         return -1;
     } else {
         return bsd_addr_get_port(&addr);
@@ -53,9 +64,17 @@ struct us_socket_context_t *us_socket_context(int ssl, struct us_socket_t *s) {
 
 void us_socket_timeout(int ssl, struct us_socket_t *s, unsigned int seconds) {
     if (seconds) {
-        s->timeout = 0x2000 | (s->context->timestamp + ((seconds + 3) >> 2));
+        s->timeout = ((unsigned int)s->context->timestamp + ((seconds + 3) >> 2)) % 240;
     } else {
-        s->timeout = 0;
+        s->timeout = 255;
+    }
+}
+
+void us_socket_long_timeout(int ssl, struct us_socket_t *s, unsigned int minutes) {
+    if (minutes) {
+        s->long_timeout = ((unsigned int)s->context->long_timestamp + minutes) % 240;
+    } else {
+        s->long_timeout = 255;
     }
 }
 
@@ -77,7 +96,7 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
 /* Exactly the same as us_socket_close but does not emit on_close event */
 struct us_socket_t *us_socket_close_connecting(int ssl, struct us_socket_t *s) {
     if (!us_socket_is_closed(0, s)) {
-        us_internal_socket_context_unlink(s->context, s);
+        us_internal_socket_context_unlink_socket(s->context, s);
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
@@ -107,7 +126,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             s->next = 0;
             s->low_prio_state = 0;
         } else {
-            us_internal_socket_context_unlink(s->context, s);
+            us_internal_socket_context_unlink_socket(s->context, s);
         }
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
@@ -134,6 +153,21 @@ void *us_socket_get_native_handle(int ssl, struct us_socket_t *s) {
 #endif
 
     return (void *) (uintptr_t) us_poll_fd((struct us_poll_t *) s);
+}
+
+/* This is not available for SSL sockets as it makes no sense. */
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+        return 0;
+    }
+
+    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    if (written != header_length + payload_length) {
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+
+    return written < 0 ? 0 : written;
 }
 
 int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more) {
@@ -193,3 +227,5 @@ void us_socket_shutdown(int ssl, struct us_socket_t *s) {
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
+
+#endif

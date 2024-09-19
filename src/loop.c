@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#ifndef LIBUS_USE_IO_URING
+
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
@@ -87,19 +89,18 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
         struct us_socket_context_t *context = loop_data->iterator;
 
-        /* Update this context's 15-bit timestamp */
-        context->timestamp = (context->timestamp + 1) & 0x1fff;
-
-        /* Update our 14-bit full timestamp (the needle in the haystack) */
-        unsigned short needle = 0x2000 | context->timestamp;
+        /* Update this context's timestamps (this could be moved to loop and done once) */
+        context->global_tick++;
+        unsigned char short_ticks = context->timestamp = context->global_tick % 240;
+        unsigned char long_ticks = context->long_timestamp = (context->global_tick / 15) % 240;
 
         /* Begin at head */
-        struct us_socket_t *s = context->head;
+        struct us_socket_t *s = context->head_sockets;
         while (s) {
             /* Seek until end or timeout found (tightest loop) */
             while (1) {
                 /* We only read from 1 random cache line here */
-                if (needle == s->timeout) {
+                if (short_ticks == s->timeout || long_ticks == s->long_timeout) {
                     break;
                 }
 
@@ -110,10 +111,17 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             }
 
             /* Here we have a timeout to emit (slow path) */
-            s->timeout = 0;
             context->iterator = s;
 
-            context->on_socket_timeout(s);
+            if (short_ticks == s->timeout) {
+                s->timeout = 255;
+                context->on_socket_timeout(s);
+            }
+
+            if (context->iterator == s && long_ticks == s->long_timeout) {
+                s->long_timeout = 255;
+                context->on_socket_long_timeout(s);
+            }   
 
             /* Check for unlink / link (if the event handler did not modify the chain, we step 1) */
             if (s == context->iterator) {
@@ -146,7 +154,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         if (s->next) s->next->prev = 0;
         s->next = 0;
 
-        us_internal_socket_context_link(s->context, s);
+        us_internal_socket_context_link_socket(s->context, s);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->low_prio_state = 2;
@@ -184,6 +192,34 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_free_closed_sockets(loop);
     loop->data.post_cb(loop);
+}
+
+struct us_socket_t *us_adopt_accepted_socket(int ssl, struct us_socket_context_t *context, LIBUS_SOCKET_DESCRIPTOR accepted_fd,
+    unsigned int socket_ext_size, char *addr_ip, int addr_ip_length) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) {
+        return (struct us_socket_t *)us_internal_ssl_adopt_accepted_socket((struct us_internal_ssl_socket_context_t *)context, accepted_fd,
+            socket_ext_size, addr_ip, addr_ip_length);
+    }
+#endif
+    struct us_poll_t *accepted_p = us_create_poll(context->loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + socket_ext_size);
+    us_poll_init(accepted_p, accepted_fd, POLL_TYPE_SOCKET);
+    us_poll_start(accepted_p, context->loop, LIBUS_SOCKET_READABLE);
+
+    struct us_socket_t *s = (struct us_socket_t *) accepted_p;
+
+    s->context = context;
+    s->timeout = 255;
+    s->long_timeout = 255;
+    s->low_prio_state = 0;
+
+    /* We always use nodelay */
+    bsd_socket_nodelay(accepted_fd, 1);
+
+    us_internal_socket_context_link_socket(context, s);
+
+    context->on_open(s, 0, addr_ip, addr_ip_length);
+    return s;
 }
 
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events) {
@@ -239,26 +275,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     /* Todo: stop timer if any */
 
                     do {
-                        struct us_poll_t *accepted_p = us_create_poll(us_socket_context(0, &listen_socket->s)->loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
-                        us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        us_poll_start(accepted_p, listen_socket->s.context->loop, LIBUS_SOCKET_READABLE);
+                        struct us_socket_context_t *context = us_socket_context(0, &listen_socket->s);
+                        /* See if we want to export the FD or keep it here (this event can be unset) */
+                        if (context->on_pre_open == 0 || context->on_pre_open(context, client_fd) == client_fd) {
 
-                        struct us_socket_t *s = (struct us_socket_t *) accepted_p;
+                            /* Adopt the newly accepted socket */
+                            us_adopt_accepted_socket(0, context,
+                                client_fd, listen_socket->socket_ext_size, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
 
-                        s->context = listen_socket->s.context;
-                        s->timeout = 0;
-                        s->low_prio_state = 0;
+                            /* Exit accept loop if listen socket was closed in on_open handler */
+                            if (us_socket_is_closed(0, &listen_socket->s)) {
+                                break;
+                            }
 
-                        /* We always use nodelay */
-                        bsd_socket_nodelay(client_fd, 1);
-
-                        us_internal_socket_context_link(listen_socket->s.context, s);
-
-                        listen_socket->s.context->on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
-
-                        /* Exit accept loop if listen socket was closed in on_open handler */
-                        if (us_socket_is_closed(0, &listen_socket->s)) {
-                            break;
                         }
 
                     } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
@@ -306,7 +335,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         s->context->loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
                     } else {
                         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                        us_internal_socket_context_unlink(s->context, s);
+                        us_internal_socket_context_unlink_socket(s->context, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are
                          * maybe not already timeouted - sounds unfair, but works better in real-life with smaller client-timeouts
@@ -322,9 +351,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     }
                 }
 
-                int length = bsd_recv(us_poll_fd(&s->p), s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, 0);
+                int length;
+                read_more:
+                length = bsd_recv(us_poll_fd(&s->p), s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, 0);
                 if (length > 0) {
                     s = s->context->on_data(s, s->context->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+
+                    /* If we filled the entire recv buffer, we need to immediately read again since otherwise a
+                     * pending hangup event in the same even loop iteration can close the socket before we get
+                     * the chance to read again next iteration */
+                    if (length == LIBUS_RECV_BUFFER_LENGTH && s && !us_socket_is_closed(0, s)) {
+                        goto read_more;
+                    }
+
                 } else if (!length) {
                     if (us_socket_is_shut_down(0, s)) {
                         /* We got FIN back after sending it */
@@ -353,3 +392,5 @@ void us_loop_integrate(struct us_loop_t *loop) {
 void *us_loop_ext(struct us_loop_t *loop) {
     return loop + 1;
 }
+
+#endif

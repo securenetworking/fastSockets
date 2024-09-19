@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#ifdef LIBUS_USE_OPENSSL
+#if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 
 /* These are in sni_tree.cpp */
 void *sni_new();
@@ -30,11 +30,18 @@ void *sni_find(void *sni, const char *hostname);
 
 /* This module contains the entire OpenSSL implementation
  * of the SSL socket and socket context interfaces. */
-
+#ifdef LIBUS_USE_OPENSSL
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/dh.h>
+#elif LIBUS_USE_WOLFSSL
+#include <wolfssl/options.h>
+#include <wolfssl/openssl/ssl.h>
+#include <wolfssl/openssl/bio.h>
+#include <wolfssl/openssl/err.h>
+#include <wolfssl/openssl/dh.h>
+#endif
 
 struct loop_ssl_data {
     char *ssl_read_input, *ssl_read_output;
@@ -527,14 +534,40 @@ SSL_CTX *create_ssl_context_from_options(struct us_socket_context_options_t opti
     return ssl_context;
 }
 
+/* Returns a servername's userdata if any */
+void *us_internal_ssl_socket_context_find_server_name_userdata(struct us_internal_ssl_socket_context_t *context, const char *hostname_pattern) {
+    printf("finding %s\n", hostname_pattern);
+    
+    /* We can use sni_find because looking up a "wildcard pattern" will match the exact literal "wildcard pattern" first,
+     * before it matches by the very wildcard itself, so it works fine (exact match is the only thing we care for here) */
+    SSL_CTX *ssl_context = sni_find(context->sni, hostname_pattern);
+
+    if (ssl_context) {
+        return SSL_CTX_get_ex_data(ssl_context, 0);
+    }
+
+    return 0;
+}
+
+/* Returns either nullptr or the previously set user data attached to this SSL's selected SNI context */
+void *us_internal_ssl_socket_get_sni_userdata(struct us_internal_ssl_socket_t *s) {
+    return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s->ssl), 0);
+}
+
 /* Todo: return error on failure? */
-void us_internal_ssl_socket_context_add_server_name(struct us_internal_ssl_socket_context_t *context, const char *hostname_pattern, struct us_socket_context_options_t options) {
+void us_internal_ssl_socket_context_add_server_name(struct us_internal_ssl_socket_context_t *context, const char *hostname_pattern, struct us_socket_context_options_t options, void *user) {
 
     /* Try and construct an SSL_CTX from options */
     SSL_CTX *ssl_context = create_ssl_context_from_options(options);
 
-    /* We do not want to hold any nullptr's in our SNI tree */
+    /* Attach the user data to this context */
     if (ssl_context) {
+        if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
+            printf("CANNOT SET EX DATA!\n");
+        }
+
+        /* We do not want to hold any nullptr's in our SNI tree */
+    
         if (sni_add(context->sni, hostname_pattern, ssl_context)) {
             /* If we already had that name, ignore */
             free_ssl_context(ssl_context);
@@ -657,8 +690,21 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(struct us_inter
     return us_socket_context_listen(0, &context->sc, host, port, options, sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + socket_ext_size);
 }
 
+struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(struct us_internal_ssl_socket_context_t *context, const char *path, int options, int socket_ext_size) {
+    return us_socket_context_listen_unix(0, &context->sc, path, options, sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + socket_ext_size);
+}
+
+struct us_internal_ssl_socket_t *us_internal_ssl_adopt_accepted_socket(struct us_internal_ssl_socket_context_t *context, LIBUS_SOCKET_DESCRIPTOR accepted_fd,
+    unsigned int socket_ext_size, char *addr_ip, int addr_ip_length) {
+    return (struct us_internal_ssl_socket_t *) us_adopt_accepted_socket(0, &context->sc, accepted_fd, sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + socket_ext_size, addr_ip, addr_ip_length);
+}
+
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(struct us_internal_ssl_socket_context_t *context, const char *host, int port, const char *source_host, int options, int socket_ext_size) {
     return (struct us_internal_ssl_socket_t *) us_socket_context_connect(0, &context->sc, host, port, source_host, options, sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + socket_ext_size);
+}
+
+struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(struct us_internal_ssl_socket_context_t *context, const char *server_path, int options, int socket_ext_size) {
+    return (struct us_internal_ssl_socket_t *) us_socket_context_connect_unix(0, &context->sc, server_path, options, sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + socket_ext_size);
 }
 
 void us_internal_ssl_socket_context_on_open(struct us_internal_ssl_socket_context_t *context, struct us_internal_ssl_socket_t *(*on_open)(struct us_internal_ssl_socket_t *s, int is_client, char *ip, int ip_length)) {
@@ -683,6 +729,10 @@ void us_internal_ssl_socket_context_on_writable(struct us_internal_ssl_socket_co
 
 void us_internal_ssl_socket_context_on_timeout(struct us_internal_ssl_socket_context_t *context, struct us_internal_ssl_socket_t *(*on_timeout)(struct us_internal_ssl_socket_t *s)) {
     us_socket_context_on_timeout(0, (struct us_socket_context_t *) context, (struct us_socket_t *(*)(struct us_socket_t *)) on_timeout);
+}
+
+void us_internal_ssl_socket_context_on_long_timeout(struct us_internal_ssl_socket_context_t *context, struct us_internal_ssl_socket_t *(*on_long_timeout)(struct us_internal_ssl_socket_t *s)) {
+    us_socket_context_on_long_timeout(0, (struct us_socket_context_t *) context, (struct us_socket_t *(*)(struct us_socket_t *)) on_long_timeout);
 }
 
 /* We do not really listen to passed FIN-handler, we entirely override it with our handler since SSL doesn't really have support for half-closed sockets */
